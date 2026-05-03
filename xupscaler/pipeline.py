@@ -1,75 +1,38 @@
+import urllib.request
 from pathlib import Path
-from PIL import Image
-from .downloader import from_url, from_drive
 from .cache import weight_path
 
 
-REGISTRY = {
-    "RealESRGAN_x4plus": {
-        "file": "RealESRGAN_x4plus.pth",
-        "url":  "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/RealESRGAN_x4plus.pth",
-    },
-    "RealESRGAN_x4plus_anime_6B": {
-        "file": "RealESRGAN_x4plus_anime_6B.pth",
-        "url":  "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.2.4/RealESRGAN_x4plus_anime_6B.pth",
-    },
-    "SwinIR": {
-        "file": "001_classicalSR_DIV2K_s48w8_SwinIR-M_x4.pth",
-        "url":  "https://github.com/JingyunLiang/SwinIR/releases/download/v0.0/001_classicalSR_DIV2K_s48w8_SwinIR-M_x4.pth",
-    },
-    "HAT": {
-        "file":  "HAT_SRx4_ImageNet-pretrain.pth",
-        "drive": "1HpmReFfoUqUbnAOQ7rvOeNU3uf_m69w0",
-    },
-    "SUPIR": {
-        "file":   "SUPIR-v0F.ckpt",
-        "drive":  "1yELzm5SvAi9e7kPcO_jPp2XkTs4vK6aR",
-        "manual": True,
-    },
-}
+def _progress(block, block_size, total):
+    done = min(block * block_size, total)
+    pct  = done / total * 100 if total > 0 else 0
+    print(f"\r  {pct:5.1f}%  ({done // 1024 // 1024} MB)", end="", flush=True)
 
 
-def _resolve_weight(model_name: str) -> Path:
-    info = REGISTRY[model_name]
-
-    if info.get("manual"):
-        dest = weight_path(info["file"])
-        if not dest.exists():
-            raise RuntimeError(
-                "SUPIR requires manual setup.\n"
-                "  Repo:    https://github.com/Fanghua-Yu/SUPIR\n"
-                f"  Weights: https://drive.google.com/drive/folders/{info['drive']}\n"
-                f"  Place '{info['file']}' in: {dest.parent}"
-            )
+def from_url(url: str, filename: str) -> Path:
+    dest = weight_path(filename)
+    if dest.exists():
         return dest
-
-    if "url" in info:
-        return from_url(info["url"], info["file"])
-    return from_drive(info["drive"], info["file"])
-
-
-def _infer(img: Image.Image, weight: Path, model_name: str) -> Image.Image:
-    if model_name in ("RealESRGAN_x4plus", "RealESRGAN_x4plus_anime_6B"):
-        from .models.realesrgan import run
-    elif model_name in ("SwinIR", "HAT"):
-        from .models.spandrel_model import run
-    else:
-        from .models.supir import run
-    return run(img, weight, model_name)
+    print(f"  Downloading {filename}...")
+    urllib.request.urlretrieve(url, dest, _progress)
+    print()
+    return dest
 
 
-def upscale(img_path: Path, scale: int, model_name: str):
-    weight = _resolve_weight(model_name)
-    img    = Image.open(img_path).convert("RGB")
-    w, h   = img.size
-
-    print(f"  {model_name}  |  {w}x{h}  ->  {w * scale}x{h * scale}")
-
-    out_4x = _infer(img, weight, model_name)
-
-    tw, th = w * scale, h * scale
-    out = out_4x.resize((tw, th), Image.LANCZOS) if out_4x.size != (tw, th) else out_4x
-
-    out_path = img_path.parent / f"{img_path.stem}_upscaled_{scale}x{img_path.suffix}"
-    out.save(str(out_path))
-    print(f"  Saved -> {out_path}")
+def from_drive(folder_id: str, filename: str) -> Path:
+    dest = weight_path(filename)
+    if dest.exists():
+        return dest
+    import gdown
+    print(f"  Downloading {filename} from Drive...")
+    try:
+        gdown.download_folder(id=folder_id, output=str(dest.parent), quiet=False, use_cookies=False)
+        if dest.exists():
+            return dest
+        raise FileNotFoundError(f"{filename} not found after folder download.")
+    except Exception as exc:
+        raise RuntimeError(
+            f"Drive download failed for {filename}.\n"
+            f"  Manual: https://drive.google.com/drive/folders/{folder_id}\n"
+            f"  Place '{filename}' in: {dest.parent}"
+        ) from exc
