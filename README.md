@@ -1,7 +1,32 @@
 # XUpscaler-Art ~
 
-hey! a tiny CLI for upscaling digital art with real SR models.
-drop your image path, pick a scale, done. outputs stay right next to your file.
+hey! this runs your image through a full chain of SR models, one after another.
+not just upscaling - each model refines the previous output. one input, one output, maximum detail.
+
+**chain order:**
+```
+RealESRGAN -> SwinIR -> HAT -> SUPIR (optional)
+```
+
+---
+
+## how the chain works
+
+```
+Input (512x512), scale 4x = target 2048x2048
+
+[1] RealESRGAN:  512  -> 2048        (base upscale to target)
+[2] SwinIR:     2048  -> 8192 -> 2048 (refinement pass)
+[3] HAT:        2048  -> 8192 -> 2048 (refinement pass)
+[4] SUPIR:      2048  -> 2048        (restoration, if weights present)
+
+Output: 2048x2048 (single file)
+```
+
+each step after the first runs at 4x internally then resizes back to target.
+this injects each model's learned detail without blowing up resolution.
+
+SUPIR is skipped gracefully if weights are not found.
 
 ---
 
@@ -13,29 +38,26 @@ cd XUpscaler-Art
 pip install .
 ```
 
-or for dev mode:
-
-```bash
-pip install -e .
-```
-
-this installs a `xupscaler` command globally (in your env).
-
-> **torch + CUDA:** install PyTorch manually first from https://pytorch.org/get-started/locally
-> for GPU support. CPU fallback works out of the box.
+> install PyTorch with CUDA first for GPU: https://pytorch.org/get-started/locally
+> CPU fallback works automatically.
 
 ---
 
 ## first run
 
-model weights download automatically the first time you use them.
+weights download automatically on first run, per model.
 nothing downloads at install time.
 
-cache location:
+cache:
 - **Linux / macOS:** `~/.cache/xupscaler-art/weights/`
 - **Windows:** `%LOCALAPPDATA%\xupscaler-art\weights\`
 
-second run and beyond use the cached weights, instant start.
+**SUPIR** requires manual download (SDXL backbone, too heavy to auto-install):
+1. download `SUPIR-v0F.ckpt` from https://drive.google.com/drive/folders/1yELzm5SvAi9e7kPcO_jPp2XkTs4vK6aR
+2. place it in your cache folder above
+3. follow full env setup at https://github.com/Fanghua-Yu/SUPIR
+
+if the file is not there, SUPIR step is skipped - the chain still runs fine.
 
 ---
 
@@ -47,78 +69,44 @@ xupscaler
 
 ```
   XUpscaler-Art ~
+  chain: RealESRGAN -> SwinIR -> HAT -> SUPIR
 
-Image path (drag & drop or paste): /path/to/art.png
+Image path (drag & drop or paste): /art/my_sketch.png
 Scale (2 / 4 / 8): 4
+Anime / flat illustration? (y/n): y
 
-Model:
-  1. RealESRGAN_x4plus
-  2. RealESRGAN_x4plus_anime_6B
-  3. SwinIR
-  4. HAT
-  5. SUPIR  (manual setup required)
-Pick (1-5): 2
+  Source: 512x512  |  Target: 2048x2048
+  Chain: RealESRGAN -> SwinIR -> HAT -> SUPIR (if available)
 
-  Downloading RealESRGAN_x4plus_anime_6B.pth...
-  100.0%  (17 MB)
-  RealESRGAN_x4plus_anime_6B  |  512x512  ->  2048x2048
-  Saved -> /path/to/art_upscaled_4x.png
+  [1/4] RealESRGAN anime...
+  [2/4] SwinIR...
+  [3/4] HAT...
+  [4/4] SUPIR skipped (weights not found, see README)
+
+  Done -> /art/my_sketch_upscaled_4x.png
 ```
 
----
-
-## models
-
-| model | best for |
-|---|---|
-| RealESRGAN_x4plus | photos, general art |
-| RealESRGAN_x4plus_anime_6B | anime, flat colors, illustration |
-| SwinIR | clean lines, classical SR |
-| HAT | high detail, textures |
-| SUPIR | extreme fidelity (needs manual setup) |
-
-scale 2x and 8x run the model at 4x then resize. all models output 4x natively.
-
----
-
-## examples
-
-```bash
-# quick 2x on a sketch
-xupscaler
-# -> sketch.png, scale 2, model 2
-
-# high quality 4x photo
-xupscaler
-# -> photo.jpg, scale 4, model 1
-
-# 8x anime art
-xupscaler
-# -> art.png, scale 8, model 2
-```
-
-output always saves next to the input: `art_upscaled_4x.png`
+output saves next to input with suffix `_upscaled_4x`.
 
 ---
 
 ## troubleshooting
 
-**HAT or SUPIR download fails (Drive quota)**
-manually download from the links below and place the `.pth` / `.ckpt` in your cache folder.
-- HAT: https://drive.google.com/drive/folders/1HpmReFfoUqUbnAOQ7rvOeNU3uf_m69w0
-- SUPIR: https://drive.google.com/drive/folders/1yELzm5SvAi9e7kPcO_jPp2XkTs4vK6aR
+**HAT download fails (Drive quota)**
+manually download `HAT_SRx4_ImageNet-pretrain.pth` from:
+https://drive.google.com/drive/folders/1HpmReFfoUqUbnAOQ7rvOeNU3uf_m69w0
+place it in the weights cache folder.
 
-**SUPIR not working**
-it needs SDXL + CLIP, follow the full setup at https://github.com/Fanghua-Yu/SUPIR
-
-**out of VRAM**
-SwinIR and HAT fall back to CPU automatically.
-RealESRGAN uses tiled processing, safe for large images.
+**out of VRAM on SwinIR or HAT**
+auto-falls back to CPU. slow but works.
 
 **basicsr install fails**
 ```bash
 pip install basicsr --no-build-isolation
 ```
+
+**image looks over-sharpened**
+try scale 2x instead of 8x. the chain is aggressive - it's designed to be.
 
 ---
 
@@ -126,12 +114,12 @@ pip install basicsr --no-build-isolation
 
 | platform | notes |
 |---|---|
-| Windows | drag-drop adds quotes, stripped automatically |
-| Ubuntu 23.04+ | use a virtualenv: `python -m venv .venv && source .venv/bin/activate` |
-| Kali Linux | may need `--break-system-packages` outside a venv |
-| Arch Linux | works as-is with pip |
-| macOS (Apple Silicon) | CPU fallback applies, MPS not explicitly targeted |
+| Windows | drag-drop quotes stripped automatically |
+| Ubuntu 23.04+ | use a virtualenv |
+| Kali Linux | may need `--break-system-packages` outside venv |
+| Arch Linux | works as-is |
+| macOS (Apple Silicon) | CPU fallback, MPS not targeted |
 
 ---
 
-made with love for artists who just want sharper pixels ^^
+made for artists who want every pixel to matter ^^
